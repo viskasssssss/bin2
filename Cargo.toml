@@ -2,7 +2,10 @@
 name = "bin2"
 version = "0.1.0"
 description = "Simple binary serialization and deserialization for Rust"
-license = "MIT"
+license = "MIT OR Apache-2.0"
+readme = "crates-io.md"
+repository = "https://github.com/viskasssssss/bin2"
 edition = "2024"
+keywords = ["serialization", "binary"]
 
 [dependencies]
