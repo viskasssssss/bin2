@@ -1,6 +1,10 @@
 use std::io::{self, Write};
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
+
 
 use crate::reader::Reader;
+mod tests;
 
 pub trait BinRepr: Sized {
     fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()>;
@@ -36,6 +40,54 @@ impl_bin_repr! {
     u64, i64, f64,
     u128, i128,
 }
+
+impl BinRepr for bool {
+    fn write_to<W: Write>(
+        &self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        writer.write_all(&[u8::from(*self)])
+    }
+
+    fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
+        let mut byte = [0u8; 1];
+        reader.read_exact(&mut byte)?;
+
+        match byte[0] {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid bool value",
+            )),
+        }
+    }
+}
+
+
+impl BinRepr for char {
+    fn write_to<W: Write>(
+        &self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        writer.write_all(&(*self as u32).to_le_bytes())
+    }
+
+    fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
+        let mut bytes = [0u8; 4];
+        reader.read_exact(&mut bytes)?;
+
+        let value = u32::from_le_bytes(bytes);
+
+        char::from_u32(value).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid Unicode scalar value",
+            )
+        })
+    }
+}
+
 
 impl BinRepr for String {
     fn write_to<W: Write>(
@@ -176,158 +228,244 @@ impl<T: BinRepr> BinRepr for Option<T> {
 }
 
 
-#[cfg(test)]
-mod security_tests {
-    use crate::reader::Reader;
-    use std::io::ErrorKind;
+impl<T: BinRepr, const N: usize> BinRepr for [T; N] {
+    fn write_to<W: Write>(
+        &self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        for item in self {
+            item.write_to(writer)?;
+        }
 
-    #[test]
-    fn rejects_invalid_option_tag() {
-        let bytes = [2u8];
-        let mut reader = Reader::from_bytes(&bytes);
-
-        let result = reader.read::<Option<u32>>();
-
-        assert_eq!(
-            result.unwrap_err().kind(),
-            ErrorKind::InvalidData
-        );
+        Ok(())
     }
 
-    #[test]
-    fn rejects_truncated_option_value() {
-        // Some(u32)
-        let bytes = [1u8, 42, 0];
-        let mut reader = Reader::from_bytes(&bytes);
+    fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
+        use std::mem::MaybeUninit;
 
-        let result = reader.read::<Option<u32>>();
+        reader.enter_depth()?;
 
-        assert_eq!(
-            result.unwrap_err().kind(),
-            ErrorKind::UnexpectedEof
-        );
+        let result = (|| {
+            let mut values = MaybeUninit::<[T; N]>::uninit();
+            let ptr = values.as_mut_ptr().cast::<T>();
+
+            for i in 0..N {
+                match T::read_from(reader) {
+                    Ok(value) => unsafe {
+                        ptr.add(i).write(value);
+                    },
+                    Err(error) => {
+                        // Drop all successfully initialized elements.
+                        for j in 0..i {
+                            unsafe {
+                                ptr.add(j).drop_in_place();
+                            }
+                        }
+
+                        return Err(error);
+                    }
+                }
+            }
+
+            // All N elements have been initialized.
+            Ok(unsafe { values.assume_init() })
+        })();
+
+        reader.leave_depth();
+        result
+    }
+}
+
+
+macro_rules! impl_tuple_bin_repr {
+    ($(($($T:ident : $idx:tt : $value:ident),+)),+ $(,)?) => {
+        $(
+            impl<$($T: BinRepr),+> BinRepr for ($($T,)+) {
+                fn write_to<W: Write>(
+                    &self,
+                    writer: &mut W,
+                ) -> io::Result<()> {
+                    $(
+                        self.$idx.write_to(writer)?;
+                    )+
+
+                    Ok(())
+                }
+
+                fn read_from(
+                    reader: &mut Reader<'_>,
+                ) -> io::Result<Self> {
+                    reader.enter_depth()?;
+
+                    let result = (|| {
+                        $(
+                            let $value = $T::read_from(reader)?;
+                        )+
+
+                        Ok(($($value,)+))
+                    })();
+
+                    reader.leave_depth();
+                    result
+                }
+            }
+        )+
+    };
+}
+
+// NOTE: bin2 supports a maximum of 12 tuple elements
+impl_tuple_bin_repr! {
+    (T1:0:v1),
+    (T1:0:v1, T2:1:v2),
+    (T1:0:v1, T2:1:v2, T3:2:v3),
+    (T1:0:v1, T2:1:v2, T3:2:v3, T4:3:v4),
+    (T1:0:v1, T2:1:v2, T3:2:v3, T4:3:v4, T5:4:v5),
+    (T1:0:v1, T2:1:v2, T3:2:v3, T4:3:v4, T5:4:v5, T6:5:v6),
+    (T1:0:v1, T2:1:v2, T3:2:v3, T4:3:v4, T5:4:v5, T6:5:v6, T7:6:v7),
+    (T1:0:v1, T2:1:v2, T3:2:v3, T4:3:v4, T5:4:v5, T6:5:v6, T7:6:v7, T8:7:v8),
+    (T1:0:v1, T2:1:v2, T3:2:v3, T4:3:v4, T5:4:v5, T6:5:v6, T7:6:v7, T8:7:v8, T9:8:v9),
+    (T1:0:v1, T2:1:v2, T3:2:v3, T4:3:v4, T5:4:v5, T6:5:v6, T7:6:v7, T8:7:v8, T9:8:v9, T10:9:v10),
+    (T1:0:v1, T2:1:v2, T3:2:v3, T4:3:v4, T5:4:v5, T6:5:v6, T7:6:v7, T8:7:v8, T9:8:v9, T10:9:v10, T11:10:v11),
+    (T1:0:v1, T2:1:v2, T3:2:v3, T4:3:v4, T5:4:v5, T6:5:v6, T7:6:v7, T8:7:v8, T9:8:v9, T10:9:v10, T11:10:v11, T12:11:v12),
+}
+
+impl<K, V> BinRepr for HashMap<K, V>
+where
+    K: BinRepr + Eq + Hash,
+    V: BinRepr,
+{
+    fn write_to<W: Write>(
+        &self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        let len = u32::try_from(self.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "hash map is too large",
+            )
+        })?;
+
+        writer.write_all(&len.to_le_bytes())?;
+
+        for (key, value) in self {
+            key.write_to(writer)?;
+            value.write_to(writer)?;
+        }
+
+        Ok(())
     }
 
-    #[test]
-    fn rejects_vector_exceeding_allocation_budget() {
-        // Длина вектора: 2 элемента u32.
-        let bytes = [2u8, 0, 0, 0, 10, 0, 0, 0, 20, 0, 0, 0];
+    fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
+        reader.enter_depth()?;
 
-        let mut reader = Reader::with_decode_limits(
-            &bytes,
-            100,
-            100,
-            100,
-            4,
-            64,
-        );
+        let result = (|| {
+            let len = reader.read_len()?;
 
-        let result = reader.read::<Vec<u32>>();
+            let alloc_size = len
+                .checked_mul(std::mem::size_of::<(K, V)>())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "hash map allocation size overflow",
+                    )
+                })?;
 
-        assert_eq!(
-            result.unwrap_err().kind(),
-            std::io::ErrorKind::InvalidData
-        );
+            reader.reserve_alloc(alloc_size)?;
+
+            let mut map = HashMap::new();
+
+            map.try_reserve(len).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("cannot allocate hash map: {e}"),
+                )
+            })?;
+
+            for _ in 0..len {
+                let key = K::read_from(reader)?;
+                let value = V::read_from(reader)?;
+
+                if map.insert(key, value).is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "duplicate hash map key",
+                    ));
+                }
+            }
+
+            Ok(map)
+        })();
+
+        reader.leave_depth();
+        result
+    }
+}
+
+impl<T> BinRepr for HashSet<T>
+where
+    T: BinRepr + Eq + Hash,
+{
+    fn write_to<W: Write>(
+        &self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        let len = u32::try_from(self.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "hash set is too large",
+            )
+        })?;
+
+        writer.write_all(&len.to_le_bytes())?;
+
+        for value in self {
+            value.write_to(writer)?;
+        }
+
+        Ok(())
     }
 
-    #[test]
-    fn enforces_maximum_nesting_depth() {
-        // Option<Option<u32>>
-        let bytes = [1u8, 1, 42, 0, 0, 0];
+    fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
+        reader.enter_depth()?;
 
-        let mut reader = Reader::with_decode_limits(
-            &bytes,
-            100,
-            100,
-            100,
-            100,
-            1,
-        );
+        let result = (|| {
+            let len = reader.read_len()?;
 
-        let result = reader.read::<Option<Option<u32>>>();
+            let alloc_size = len
+                .checked_mul(std::mem::size_of::<T>())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "hash set allocation size overflow",
+                    )
+                })?;
 
-        assert_eq!(
-            result.unwrap_err().kind(),
-            ErrorKind::InvalidData
-        );
-    }
+            reader.reserve_alloc(alloc_size)?;
 
-    #[test]
-    fn accepts_empty_vector_with_zero_allocation_budget() {
-        let bytes = [0u8, 0, 0, 0];
+            let mut set = HashSet::new();
 
-        let mut reader = Reader::with_decode_limits(
-            &bytes,
-            100,
-            100,
-            100,
-            0,
-            64,
-        );
+            set.try_reserve(len).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("cannot allocate hash set: {e}"),
+                )
+            })?;
 
-        let values = reader.read::<Vec<u32>>().unwrap();
+            for _ in 0..len {
+                let value = T::read_from(reader)?;
 
-        assert!(values.is_empty());
-        assert_eq!(reader.allocated(), 0);
-    }
+                if !set.insert(value) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "duplicate hash set element",
+                    ));
+                }
+            }
 
-    #[test]
-    fn rejects_vector_exceeding_collection_limit() {
-        let bytes = [
-            3u8, 0, 0, 0,
-            10, 0, 0, 0,
-            20, 0, 0, 0,
-            30, 0, 0, 0,
-        ];
+            Ok(set)
+        })();
 
-        let mut reader = Reader::with_decode_limits(
-            &bytes,
-            2,
-            100,
-            100,
-            1024,
-            64,
-        );
-
-        let result = reader.read::<Vec<u32>>();
-
-        assert_eq!(
-            result.unwrap_err().kind(),
-            std::io::ErrorKind::InvalidData
-        );
-
-        assert_eq!(reader.allocated(), 0);
-    }
-
-    #[test]
-    fn enforces_shared_allocation_budget_for_strings() {
-        let bytes = [
-            2u8, 0, 0, 0,
-            5, 0, 0, 0, b'h', b'e', b'l', b'l', b'o',
-            5, 0, 0, 0, b'w', b'o', b'r', b'l', b'd',
-        ];
-
-        let budget = 2 * std::mem::size_of::<String>() + 9;
-
-        let mut reader = Reader::with_decode_limits(
-            &bytes,
-            100,
-            100,
-            100,
-            budget,
-            64,
-        );
-
-        let result = reader.read::<Vec<String>>();
-
-        assert_eq!(
-            result.unwrap_err().kind(),
-            std::io::ErrorKind::InvalidData
-        );
-
-        assert_eq!(
-            reader.allocated(),
-            2 * std::mem::size_of::<String>() + 5
-        );
+        reader.leave_depth();
+        result
     }
 }

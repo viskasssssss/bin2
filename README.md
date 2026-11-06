@@ -37,7 +37,7 @@ Add **bin2** to the dependencies in your *Cargo.toml* file:
 
 ```toml
 [dependencies]
-bin2 = { git = "https://github.com/viskasssssss/bin2" }
+bin2 = "0.1"
 ```
 
 ## Examples

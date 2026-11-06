@@ -1,9 +1,6 @@
 
 # bin2
 
-![GitHub License](https://img.shields.io/github/license/viskasssssss/bin2)
-![Rust](https://img.shields.io/badge/language-Rust-orange?logo=rust&logoColor=white)
-
 ---
 
 **bin2 is a Rust library designed to make binary data serialization and deserialization straightforward.**
