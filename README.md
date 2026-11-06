@@ -37,7 +37,7 @@ Add **bin2** to the dependencies in your *Cargo.toml* file:
 
 ```toml
 [dependencies]
-bin2 = "0.1"
+bin2 = "0.2"
 ```
 
 ## Examples
