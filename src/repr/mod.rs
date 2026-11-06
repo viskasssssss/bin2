@@ -6,9 +6,33 @@ use std::hash::Hash;
 use crate::reader::Reader;
 mod tests;
 
+/// Defines a type that can be serialized to and deserialized from a binary
+/// representation.
+///
+/// Implementations specify how values are written to an output stream and
+/// reconstructed from a [`Reader`].
+///
+/// Types implementing `BinRepr` must ensure that their serialization and
+/// deserialization formats are compatible.
 pub trait BinRepr: Sized {
+    /// Serializes the value into the provided writer.
+    ///
+    /// The binary representation is written to the output stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing the binary representation fails.
     fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()>;
 
+    /// Deserializes a value from the provided reader.
+    ///
+    /// Reads the binary representation and reconstructs an instance of
+    /// the implementing type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading or decoding the value fails, including
+    /// when the reader's configured decoding limits are exceeded.
     fn read_from(reader: &mut Reader<'_>) -> io::Result<Self>;
 }
 
@@ -42,6 +66,11 @@ impl_bin_repr! {
 }
 
 impl BinRepr for bool {
+    /// Writes the boolean value as a single byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing the byte to the output fails.
     fn write_to<W: Write>(
         &self,
         writer: &mut W,
@@ -49,6 +78,14 @@ impl BinRepr for bool {
         writer.write_all(&[u8::from(*self)])
     }
 
+    /// Reads a boolean value from the reader.
+    ///
+    /// Expects exactly one byte, where `0` represents `false` and `1`
+    /// represents `true`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the byte is not `0` or `1`.
     fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
         let mut byte = [0u8; 1];
         reader.read_exact(&mut byte)?;
@@ -66,6 +103,11 @@ impl BinRepr for bool {
 
 
 impl BinRepr for char {
+    /// Writes the character as a 32-bit little-endian unsigned integer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing the encoded character to the output fails.
     fn write_to<W: Write>(
         &self,
         writer: &mut W,
@@ -73,6 +115,15 @@ impl BinRepr for char {
         writer.write_all(&(*self as u32).to_le_bytes())
     }
 
+    /// Reads a character from the reader.
+    ///
+    /// Reads a 32-bit little-endian unsigned integer and interprets it as
+    /// a Unicode scalar value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the decoded value is not a
+    /// valid Unicode scalar value.
     fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
         let mut bytes = [0u8; 4];
         reader.read_exact(&mut bytes)?;
@@ -90,6 +141,15 @@ impl BinRepr for char {
 
 
 impl BinRepr for String {
+    /// Writes the string's byte length followed by its UTF-8 contents.
+    ///
+    /// The length is encoded as a 32-bit unsigned integer in little-endian
+    /// byte order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string length exceeds the range of `u32`
+    /// or if writing to the output fails.
     fn write_to<W: Write>(
         &self,
         writer: &mut W,
@@ -105,6 +165,19 @@ impl BinRepr for String {
         writer.write_all(self.as_bytes())
     }
 
+    /// Reads a string from the reader.
+    ///
+    /// Reads the encoded byte length, checks it against the configured
+    /// string and allocation limits, and decodes the following bytes as UTF-8.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Reading the length or string contents fails.
+    /// - The string length exceeds the configured limit.
+    /// - The allocation budget is exceeded.
+    /// - Allocating the string buffer fails.
+    /// - The contents are not valid UTF-8.
     fn read_from(reader: &mut Reader) -> io::Result<Self> {
         let len = reader.read_string_len()?;
 
@@ -130,6 +203,16 @@ impl BinRepr for String {
 }
 
 impl<T: BinRepr> BinRepr for Vec<T> {
+    /// Writes the vector length followed by the binary representation
+    /// of each element.
+    ///
+    /// The length is encoded as a 32-bit unsigned integer in little-endian
+    /// byte order. Elements are serialized in their original order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the vector length exceeds the range of `u32`
+    /// or if writing the length or any element fails.
     fn write_to<W: Write>(
         &self,
         writer: &mut W,
@@ -150,6 +233,24 @@ impl<T: BinRepr> BinRepr for Vec<T> {
         Ok(())
     }
 
+    /// Reads a vector from the reader.
+    ///
+    /// Reads the encoded element count, validates it against the configured
+    /// collection length and allocation limits, and deserializes each element
+    /// in sequence.
+    ///
+    /// Decoding the vector increases the reader's nesting depth for the
+    /// duration of the operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Reading the vector length or any element fails.
+    /// - The element count exceeds the configured collection limit.
+    /// - The required allocation size overflows.
+    /// - The allocation budget is exceeded.
+    /// - Allocating the vector fails.
+    /// - The maximum decoding depth is exceeded.
     fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
         reader.enter_depth()?;
 
@@ -188,6 +289,11 @@ impl<T: BinRepr> BinRepr for Vec<T> {
 }
 
 impl<T: BinRepr> BinRepr for Option<T> {
+    /// Writes the option's presence tag and, if present, its contained value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing the tag or the contained value fails.
     fn write_to<W: std::io::Write>(
         &self,
         writer: &mut W,
@@ -200,7 +306,19 @@ impl<T: BinRepr> BinRepr for Option<T> {
             }
         }
     }
- 
+
+    /// Reads an optional value from the reader.
+    ///
+    /// Reads a one-byte tag to determine whether the value is `None` or
+    /// `Some`. If the tag is `1`, the contained value is deserialized using
+    /// its [`BinRepr`] implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Reading the tag or contained value fails.
+    /// - The tag is neither `0` nor `1`.
+    /// - The maximum decoding depth is exceeded.
     fn read_from(
         reader: &mut crate::reader::Reader<'_>,
     ) -> std::io::Result<Self> {
@@ -229,6 +347,11 @@ impl<T: BinRepr> BinRepr for Option<T> {
 
 
 impl<T: BinRepr, const N: usize> BinRepr for [T; N] {
+    /// Writes the binary representation of each array element in order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing any element to the output fails.
     fn write_to<W: Write>(
         &self,
         writer: &mut W,
@@ -240,6 +363,18 @@ impl<T: BinRepr, const N: usize> BinRepr for [T; N] {
         Ok(())
     }
 
+    /// Reads a fixed-size array from the reader.
+    ///
+    /// Deserializes exactly `N` elements in sequence. The reader's decoding
+    /// depth is increased for the duration of the operation.
+    ///
+    /// If deserialization fails, all successfully initialized elements
+    /// are dropped before the error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading any element fails or the maximum
+    /// decoding depth is exceeded.
     fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
         use std::mem::MaybeUninit;
 
@@ -313,7 +448,7 @@ macro_rules! impl_tuple_bin_repr {
     };
 }
 
-// NOTE: bin2 supports a maximum of 12 tuple elements
+// NOTE: bin2 only supports a maximum of 12 tuple elements!
 impl_tuple_bin_repr! {
     (T1:0:v1),
     (T1:0:v1, T2:1:v2),
@@ -334,6 +469,15 @@ where
     K: BinRepr + Eq + Hash,
     V: BinRepr,
 {
+    /// Writes the number of entries followed by each key-value pair.
+    ///
+    /// The entry count is encoded as a 32-bit unsigned integer in
+    /// little-endian byte order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the number of entries exceeds the range of `u32`
+    /// or if writing the entry count, any key, or any value fails.
     fn write_to<W: Write>(
         &self,
         writer: &mut W,
@@ -355,6 +499,26 @@ where
         Ok(())
     }
 
+    /// Reads a hash map from the reader.
+    ///
+    /// Reads the encoded entry count, validates it against the configured
+    /// collection and allocation limits, and deserializes each key-value
+    /// pair. The reader's decoding depth is increased for the duration
+    /// of the operation.
+    ///
+    /// Duplicate keys are rejected rather than silently overwriting
+    /// previously decoded entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Reading the entry count, any key, or any value fails.
+    /// - The entry count exceeds the configured collection limit.
+    /// - The required allocation size overflows.
+    /// - The allocation budget is exceeded.
+    /// - Reserving memory for the hash map fails.
+    /// - A duplicate key is encountered.
+    /// - The maximum decoding depth is exceeded.
     fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
         reader.enter_depth()?;
 
@@ -405,6 +569,15 @@ impl<T> BinRepr for HashSet<T>
 where
     T: BinRepr + Eq + Hash,
 {
+    /// Writes the number of elements followed by their binary representations.
+    ///
+    /// The element count is encoded as a 32-bit unsigned integer in
+    /// little-endian byte order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the number of elements exceeds the range of `u32`
+    /// or if writing the element count or any element fails.
     fn write_to<W: Write>(
         &self,
         writer: &mut W,
@@ -425,6 +598,25 @@ where
         Ok(())
     }
 
+    /// Reads a hash set from the reader.
+    ///
+    /// Reads the encoded element count, validates it against the configured
+    /// collection and allocation limits, and deserializes each element.
+    /// The reader's decoding depth is increased for the duration of
+    /// the operation.
+    ///
+    /// Duplicate elements are rejected rather than silently ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Reading the element count or any element fails.
+    /// - The element count exceeds the configured collection limit.
+    /// - The required allocation size overflows.
+    /// - The allocation budget is exceeded.
+    /// - Reserving memory for the hash set fails.
+    /// - A duplicate element is encountered.
+    /// - The maximum decoding depth is exceeded.
     fn read_from(reader: &mut Reader<'_>) -> io::Result<Self> {
         reader.enter_depth()?;
 
