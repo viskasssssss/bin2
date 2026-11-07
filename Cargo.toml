@@ -1,11 +1,8 @@
-[package]
-name = "bin2"
-version = "0.2.1"
-description = "Simple binary serialization and deserialization for Rust"
-license = "MIT OR Apache-2.0"
-readme = "crates-io.md"
-repository = "https://github.com/viskasssssss/bin2"
-edition = "2024"
-keywords = ["serialization", "binary"]
+[workspace]
+members = [
+    "bin2"
+]
+resolver = "2"
 
-[dependencies]
+[patch.crates-io]
+bin2 = { path = "bin2" }
