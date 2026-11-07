@@ -1,14 +1,14 @@
 
 # bin2
 
-![GitHub License](https://img.shields.io/github/license/viskasssssss/bin2)
-![Rust](https://img.shields.io/badge/language-Rust-orange?logo=rust&logoColor=white)
+![Crates.io License](https://img.shields.io/crates/l/bin2)
+![Crates.io Version](https://img.shields.io/crates/v/bin2)
 
 ---
 
 **bin2 is a Rust library designed to make binary data serialization and deserialization straightforward.**
 
-## Usage
+## Quick Usage
 
 ```rust
 fn main() -> std::io::Result<()> {
@@ -31,6 +31,10 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+```text
+> Hello, bin2!
+```
+
 ## Installation
 
 Add **bin2** to the dependencies in your *Cargo.toml* file:
@@ -38,6 +42,12 @@ Add **bin2** to the dependencies in your *Cargo.toml* file:
 ```toml
 [dependencies]
 bin2 = "0.2"
+```
+
+or run
+
+```bash
+cargo add bin2
 ```
 
 ## Examples
