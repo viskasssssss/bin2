@@ -9,3 +9,7 @@ edition = "2024"
 keywords = ["serialization", "binary"]
 
 [dependencies]
+bin2-derive = { version = "0.1", optional = true, path = "../bin2-derive" }
+
+[features]
+derive = ["bin2-derive"]

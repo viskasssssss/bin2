@@ -1,0 +1,73 @@
+
+# bin2
+
+![Crates.io License](https://img.shields.io/crates/l/bin2)
+![Crates.io Version](https://img.shields.io/crates/v/bin2)
+
+---
+
+**bin2 is a Rust library designed to make binary data serialization and deserialization straightforward.**
+
+## Quick Usage
+
+```rust
+fn main() -> std::io::Result<()> {
+    // Serialize a string
+    let mut writer = bin2::Writer::new();
+    writer.write(&"Hello, bin2!".to_string())?;
+
+    // Write binary data to a file
+    let mut output = std::fs::File::create("hello.bin")?;
+    writer.write_to(&mut output)?;
+
+    // Read the binary file
+    let bytes = std::fs::read("hello.bin")?;
+    let mut reader = bin2::Reader::from_bytes(&bytes);
+
+    // Deserialize the string
+    println!("{}", reader.read::<String>()?);
+
+    Ok(())
+}
+```
+
+```text
+> Hello, bin2!
+```
+
+## Installation
+
+Add **bin2** to the dependencies in your *Cargo.toml* file:
+
+```toml
+[dependencies]
+bin2 = "0.2"
+```
+
+or run
+
+```bash
+cargo add bin2
+```
+
+## Examples
+
+More examples are available in the [`examples/`](./examples/) directory:
+
+- [`hello-bin2.rs`](./examples/hello-bin2.rs) — basic serialization and deserialization.
+- [`bin-repr.rs`](./examples/bin-repr.rs) — custom binary representations using `BinRepr`.
+
+### License
+
+<sup>
+Licensed under either of <a href="LICENSE-APACHE">Apache License, Version
+2.0</a> or <a href="LICENSE-MIT">MIT license</a> at your option.
+</sup>
+
+<br>
+
+<sub>
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in bin2 by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
+</sub>

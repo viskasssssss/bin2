@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "bin2"
+    "bin2", 
+    "bin2-derive"
 ]
 resolver = "2"
 
